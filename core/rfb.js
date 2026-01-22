@@ -2185,9 +2185,7 @@ export default class RFB extends EventTargetMixin {
         const mappedButton = this.mouseButtonMapper.get(ev.button);
         switch (ev.type) {
             case 'mousedown':
-                if (this._display.screens.length === 0 || window.self === window.top) {
-                	ev.preventDefault();
-                }
+                ev.preventDefault();
                 setCapture(this._canvas);
 
                 // Translate CMD+Click into CTRL+click on MacOs
