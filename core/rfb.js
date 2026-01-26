@@ -1024,18 +1024,28 @@ export default class RFB extends EventTargetMixin {
         if (this.clipboardUp && this.clipboardSeamless && this._resendClipboardNextUserDrivenEvent) {
             this._resendClipboardNextUserDrivenEvent = false;
             if (this.clipboardBinary) {
-                navigator.clipboard.read().then((data) => {
-                    this.clipboardPasteDataFrom(data);
-                }, (err) => {
-                    Log.Debug("No data in clipboard: " + err);
-                }); 
+                if (navigator.clipboard && navigator.clipboard.read) {
+                    try {
+                        navigator.clipboard.read().then((data) => {
+                            this.clipboardPasteDataFrom(data);
+                        }, (err) => {
+                            Log.Debug("No data in clipboard: " + err);
+                        });
+                    } catch (e) {
+                        Log.Debug("Clipboard read error: " + e);
+                    }
+                }
             } else {
                 if (navigator.clipboard && navigator.clipboard.readText) {
-                    navigator.clipboard.readText().then(function (text) {
-                        this.clipboardPasteFrom(text);
-                    }.bind(this)).catch(function () {
-                      return Log.Debug("Failed to read system clipboard");
-                    });
+                    try {
+                        navigator.clipboard.readText().then(function (text) {
+                            this.clipboardPasteFrom(text);
+                        }.bind(this)).catch(function () {
+                          return Log.Debug("Failed to read system clipboard");
+                        });
+                    } catch (e) {
+                        Log.Debug("Clipboard readText error: " + e);
+                    }
                 }
             }
         }
@@ -1511,14 +1521,24 @@ export default class RFB extends EventTargetMixin {
         if (event.type == 'focus' && event.currentTarget instanceof Window) {
 
             if (this._lastVisibilityState === 'visible') {
-                const lastWindow = window.localStorage.getItem('lastWindow')
+                let lastWindow;
+                try {
+                    lastWindow = window.localStorage.getItem('lastWindow')
+                } catch (e) {
+                    // Accessing localStorage in an iframe can fail if 3rd party cookies are blocked
+                    lastWindow = null;
+                }
                 Log.Debug("Window focused while user switched between windows.");
                 // added for multi-montiors
                 // as user moves from window to window, focus change loses a click, this marks the next mouse
                 // move to simulate a left click. We wait for the next mouse move because we need accurate x,y coords
                 if (lastWindow != event.currentTarget.name) {
                     this._sendLeftClickonNextMove = true;
-                    window.localStorage.setItem('lastWindow', event.currentTarget.name)
+                    try {
+                        window.localStorage.setItem('lastWindow', event.currentTarget.name)
+                    } catch (e) {
+                        // ignore
+                    }
                 }
             } else {
                 Log.Debug("Window focused while user switched between tabs.");
@@ -3551,27 +3571,39 @@ export default class RFB extends EventTargetMixin {
     }
 
     _write_binary_clipboard(clipItemData, textdata) {
-        navigator.clipboard.write([new ClipboardItem(clipItemData)]).then(
-            () => {
-                if (textdata) {
-                    this._clipHash = hashUInt8Array(textdata);
-                }
-            },
-            (err) => { 
-                Log.Error("Error writing to client clipboard: " + err);
-                // Lets try writeText
-                if (textdata.length > 0) {
-                    navigator.clipboard.writeText(textdata).then(
-                        () => {
+        try {
+            if (navigator.clipboard && navigator.clipboard.write) {
+                navigator.clipboard.write([new ClipboardItem(clipItemData)]).then(
+                    () => {
+                        if (textdata) {
                             this._clipHash = hashUInt8Array(textdata);
-                        },
-                        (err) => {
-                            Log.Error("Error writing text to client clipboard: " + err);
                         }
-                    );
-                }
+                    },
+                    (err) => { 
+                        Log.Error("Error writing to client clipboard: " + err);
+                        // Lets try writeText
+                        if (textdata.length > 0) {
+                            try {
+                                if (navigator.clipboard && navigator.clipboard.writeText) {
+                                    navigator.clipboard.writeText(textdata).then(
+                                        () => {
+                                            this._clipHash = hashUInt8Array(textdata);
+                                        },
+                                        (err) => {
+                                            Log.Error("Error writing text to client clipboard: " + err);
+                                        }
+                                    );
+                                }
+                            } catch (e) {
+                                Log.Error("Exception writing text to client clipboard: " + e);
+                            }
+                        }
+                    }
+                );
             }
-        );
+        } catch (e) {
+            Log.Error("Exception writing to client clipboard: " + e);
+        }
     }
 
     _handle_server_stats_msg() {

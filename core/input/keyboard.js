@@ -32,12 +32,16 @@ export default class Keyboard {
         this._layoutMap = null;
 
         if (keyboardInput?.getLayoutMap) {
-            keyboardInput.getLayoutMap().then((map) => {
-                this._layoutMap = map;
-                Log.Debug("Loaded keyboard layout map");
-            }).catch((err) => {
-                Log.Error("Failed to get layout map:", err);
-            });
+            try {
+                keyboardInput.getLayoutMap().then((map) => {
+                    this._layoutMap = map;
+                    Log.Debug("Loaded keyboard layout map");
+                }).catch((err) => {
+                    Log.Error("Failed to get layout map:", err);
+                });
+            } catch (e) {
+                Log.Error("Exception calling getLayoutMap:", e);
+            }
         }
 
         // keep these here so we can refer to them later
