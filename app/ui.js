@@ -167,10 +167,14 @@ const UI = {
             autoconnect = false;
         }
 
-        window.parent.postMessage({
-            action: "noVNC_initialized",
-            value: null
-        }, "*");
+        try {
+            window.parent.postMessage({
+                action: "noVNC_initialized",
+                value: null
+            }, "*");
+        } catch (e) {
+            Log.Warn("Failed to send noVNC_initialized message: " + e);
+        }
 
         window.addEventListener("message", (e) => {
             if (typeof e.data !== "object" || !e.data.action) {
@@ -680,7 +684,11 @@ const UI = {
         const transitionElem = document.getElementById("noVNC_transition_text");
         if (WebUtil.isInsideKasmVDI())
         {
-            parent.postMessage({ action: 'connection_state', value: state}, '*' );
+            try {
+                parent.postMessage({ action: 'connection_state', value: state}, '*' );
+            } catch (e) {
+                Log.Warn("Failed to send connection_state message: " + e);
+            }
         }
 
         switch (state) {
@@ -863,7 +871,11 @@ const UI = {
         document.getElementById('noVNC_control_bar')
             .classList.add("noVNC_open");
         if (WebUtil.isInsideKasmVDI()) {
-             parent.postMessage({ action: 'control_open', value: 'Control bar opened'}, '*' );
+             try {
+                 parent.postMessage({ action: 'control_open', value: 'Control bar opened'}, '*' );
+             } catch (e) {
+                 Log.Warn("Failed to send control_open message: " + e);
+             }
         }
     },
 
@@ -875,7 +887,11 @@ const UI = {
             UI.rfb.focus();
         }
         if (WebUtil.isInsideKasmVDI()) {
-             parent.postMessage({ action: 'control_close', value: 'Control bar closed'}, '*' );
+             try {
+                 parent.postMessage({ action: 'control_close', value: 'Control bar closed'}, '*' );
+             } catch (e) {
+                 Log.Warn("Failed to send control_close message: " + e);
+             }
         }
     },
 
@@ -1571,7 +1587,11 @@ const UI = {
 
                     if (timeSinceLastActivityInS > idleDisconnectInS) {
                         Log.Warn("Idle Disconnect reached, disconnecting rfb session...");
-                        parent.postMessage({ action: 'idle_session_timeout', value: 'Idle session timeout exceeded'}, '*' );
+                        try {
+                            parent.postMessage({ action: 'idle_session_timeout', value: 'Idle session timeout exceeded'}, '*' );
+                        } catch (e) {
+                            Log.Warn("Failed to send idle_session_timeout message: " + e);
+                        }
 
                         // in some cases the intra-frame message could be blocked, fall back to navigating to a disconnect page.
                         setTimeout(function() {
@@ -1720,7 +1740,11 @@ const UI = {
     //send message to parent window
     sendMessage(name, value) {
         if (WebUtil.isInsideKasmVDI()) {
-            parent.postMessage({ action: name, value: value }, '*' );
+            try {
+                parent.postMessage({ action: name, value: value }, '*' );
+            } catch (e) {
+                Log.Warn("Failed to send message " + name + ": " + e);
+            }
         }
     },
 
@@ -1838,7 +1862,11 @@ const UI = {
                     UI.enableHiDpi();
                     break;
                 case 'control_displays':
-                    parent.postMessage({ action: 'can_control_displays', value: true}, '*' );
+                    try {
+                        parent.postMessage({ action: 'can_control_displays', value: true}, '*' );
+                    } catch (e) {
+                         Log.Warn("Failed to send can_control_displays message: " + e);
+                    }
                     break;
                 case 'enable_threading':
                     UI.forceSetting('enable_threading', event.data.value, false);
@@ -1871,7 +1899,11 @@ const UI = {
 
     toggleNav(){
         if (WebUtil.isInsideKasmVDI()) {
-            parent.postMessage({ action: 'togglenav', value: null}, '*' );
+            try {
+                parent.postMessage({ action: 'togglenav', value: null}, '*' );
+            } catch (e) {
+                Log.Warn("Failed to send togglenav message: " + e);
+            }
         } else {
             UI.toggleControlbar();
             UI.keepControlbar();
@@ -1882,7 +1914,11 @@ const UI = {
     },
 
     clipboardRx(event) {
-        parent.postMessage({ action: 'clipboardrx', value: event.detail.text}, '*' ); //TODO fix star
+        try {
+            parent.postMessage({ action: 'clipboardrx', value: event.detail.text}, '*' ); //TODO fix star
+        } catch (e) {
+            Log.Warn("Failed to send clipboardrx message: " + e);
+        }
     },
 
 /* ------^-------
@@ -1893,7 +1929,11 @@ const UI = {
 
     toggleFullscreen() {
         if (WebUtil.isInsideKasmVDI()) {
-             parent.postMessage({ action: 'fullscreen', value: 'Fullscreen clicked'}, '*' );
+             try {
+                parent.postMessage({ action: 'fullscreen', value: 'Fullscreen clicked'}, '*' );
+             } catch (e) {
+                Log.Warn("Failed to send fullscreen message: " + e);
+             }
              return;
         }
         if (document.fullscreenElement || // alternative standard method
