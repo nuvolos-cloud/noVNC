@@ -913,6 +913,8 @@ export default class RFB extends EventTargetMixin {
     }
 
     disconnect() {
+        console.log("RFB.disconnect() called");
+        console.trace();
         if (this._isPrimaryDisplay) {
             this._updateConnectionState('disconnecting');
             this._sock.off('error');
@@ -1195,6 +1197,7 @@ export default class RFB extends EventTargetMixin {
             }
         });
         this._sock.on('close', (e) => {
+            console.error("WebSocket on-close event", e);
             Log.Debug("WebSocket on-close event");
             let msg = "";
             if (e.code) {
@@ -1565,10 +1568,14 @@ export default class RFB extends EventTargetMixin {
         // only if it's triggered by user action. It's also
         // impossible to listen for touch events on child frames (on mobile phones)
         // so we catch those events here but forward the audio unlocking to the parent window
-        window.parent.postMessage({
-            action: "enable_audio",
-            value: null
-        }, "*");
+        try {
+            window.parent.postMessage({
+                action: "enable_audio",
+                value: null
+            }, "*");
+        } catch (e) {
+            Log.Warn("Failed to send enable_audio message to parent: " + e);
+        }
 
         // Re-enable pointerLock if relative cursor is enabled
         // pointerLock must come from user initiated event
@@ -1836,6 +1843,8 @@ export default class RFB extends EventTargetMixin {
      * should be logged but not sent to the user interface.
      */
     _fail(details) {
+        console.error("RFB Failure: ", details);
+        console.trace();
         switch (this._rfbConnectionState) {
             case 'disconnecting':
                 Log.Error("Failed when disconnecting: " + details);

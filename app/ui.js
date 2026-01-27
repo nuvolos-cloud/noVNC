@@ -1856,12 +1856,17 @@ const UI = {
     },
 
     disconnectedRx(event) {
+        console.error("UI received disconnect event", event);
         const detail = event.detail || {};
         if (detail.serverNotice && detail.serverNotice.graceful) {
             window.location.replace('disconnected.html');
             return;
         }
-        parent.postMessage({ action: 'disconnectrx', value: detail.reason}, '*' );
+        try {
+            parent.postMessage({ action: 'disconnectrx', value: detail.reason}, '*' );
+        } catch (e) {
+            console.error("Failed to post disconnectrx message to parent", e);
+        }
     },
 
     toggleNav(){
