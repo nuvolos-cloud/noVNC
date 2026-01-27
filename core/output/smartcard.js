@@ -120,10 +120,14 @@ class SmartcardSession {
     };
 
     if (WebUtil.isInsideKasmVDI()) {
-      window.parent.postMessage({
-        action: "smartcard_status",
-        value: smartcardStatus,
-      }, "*");
+      try {
+        window.parent.postMessage({
+          action: "smartcard_status",
+          value: smartcardStatus,
+        }, "*");
+      } catch (e) {
+        Log.Warn("Failed to send smartcard_status message to parent: " + e);
+      }
     }
 
     Log.Debug(`smartcard.refresh: ${JSON.stringify(smartcardStatus, null, 2)}`);

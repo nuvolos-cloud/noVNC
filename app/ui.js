@@ -1497,13 +1497,13 @@ const UI = {
         UI.rfb.addEventListener("capabilities", UI.updatePowerButton);
         UI.rfb.addEventListener("clipboard", UI.clipboardReceive);
         UI.rfb.addEventListener("bottleneck_stats", UI.bottleneckStatsRecieve);
-        UI.rfb.addEventListener("bell", UI.bell);
+        // UI.rfb.addEventListener("bell", UI.bell);
         UI.rfb.addEventListener("desktopname", UI.updateDesktopName);
         UI.rfb.addEventListener("inputlock", UI.inputLockChanged);
         UI.rfb.addEventListener("inputlockerror", UI.inputLockError);
         UI.rfb.addEventListener("screenregistered", UI.screenRegistered);
-        UI.rfb.addEventListener("sharedSessionUserJoin", UI.sharedSessionUserJoin);
-        UI.rfb.addEventListener("sharedSessionUserLeft", UI.sharedSessionUserLeft);
+        // UI.rfb.addEventListener("sharedSessionUserJoin", UI.sharedSessionUserJoin);
+        // UI.rfb.addEventListener("sharedSessionUserLeft", UI.sharedSessionUserLeft);
         UI.rfb.translateShortcuts = UI.getSetting('translate_shortcuts');
         UI.rfb.clipViewport = UI.getSetting('view_clip');
         UI.rfb.scaleViewport = UI.getSetting('resize') === 'scale';
@@ -3060,7 +3060,7 @@ const UI = {
     },
 
     bell(e) {
-        if (WebUtil.getConfigVar('bell', 'on') === 'on') {
+        if (false && WebUtil.getConfigVar('bell', 'on') === 'on') {
             const promise = document.getElementById('noVNC_bell').play();
             // The standards disagree on the return value here
             if (promise) {

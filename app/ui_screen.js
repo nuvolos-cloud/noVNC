@@ -241,7 +241,11 @@ const UI = {
         const transitionElem = document.getElementById("noVNC_transition_text");
         if (WebUtil.isInsideKasmVDI())         
         {
-            parent.postMessage({ action: 'connection_state', value: state}, '*' );
+            try {
+                parent.postMessage({ action: 'connection_state', value: state}, '*' );
+            } catch (e) {
+                Log.Warn("Failed to send connection_state message to parent: " + e);
+            }
         }
 
         let connect_el = document.getElementById('noVNC_connect_dlg');

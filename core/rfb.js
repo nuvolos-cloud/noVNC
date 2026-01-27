@@ -152,7 +152,7 @@ export default class RFB extends EventTargetMixin {
         this._hiDpi = 'hiDpi' in options ? !!options.hiDpi : false;
         this._enableQOI = false;
         this._videoQuality =  2;
-        this._enableWebP = false;
+        this._enableWebP = true;
         this.TransitConnectionStates = {
             Tcp: Symbol("tcp"),
             Udp: Symbol("udp"),
@@ -1030,31 +1030,38 @@ export default class RFB extends EventTargetMixin {
     checkLocalClipboard() {
         if (this.clipboardUp && this.clipboardSeamless && this._resendClipboardNextUserDrivenEvent) {
             this._resendClipboardNextUserDrivenEvent = false;
-            if (this.clipboardBinary) {
-                if (navigator.clipboard && navigator.clipboard.read) {
-                    try {
-                        navigator.clipboard.read().then((data) => {
-                            this.clipboardPasteDataFrom(data);
-                        }, (err) => {
-                            Log.Debug("No data in clipboard: " + err);
-                        });
-                    } catch (e) {
-                        Log.Debug("Clipboard read error: " + e);
+            // Delay the read slightly to allow parent iframe wrappers to finish their focus/clipboard logic
+            setTimeout(() => {
+                if (this.clipboardBinary) {
+                    if (navigator.clipboard && navigator.clipboard.read) {
+                        try {
+                            navigator.clipboard.read().then((data) => {
+                                this.clipboardPasteDataFrom(data);
+                            }, (err) => {
+                                Log.Debug("No data in clipboard: " + err);
+                            });
+                        } catch (e) {
+                            Log.Debug("Clipboard read error: " + e);
+                        }
+                    }
+                } else {
+                    if (navigator.clipboard && navigator.clipboard.readText) {
+                        try {
+                            ((() => { try { return navigator.clipboard.readText() || Promise.reject() } catch (e) { return Promise.reject(e) } })()).then(function (text) {
+                                this.clipboardPasteFrom(text);
+                            }.bind(this)).catch(function (e) {
+                                if (e && e.name === 'NotAllowedError') {
+                                    Log.Debug("Clipboard read suppressed: Document not focused or restricted");
+                                } else {
+                                    Log.Debug("Failed to read system clipboard: " + e);
+                                }
+                            });
+                        } catch (e) {
+                            Log.Debug("Clipboard readText error: " + e);
+                        }
                     }
                 }
-            } else {
-                if (navigator.clipboard && navigator.clipboard.readText) {
-                    try {
-                        ((() => { try { return navigator.clipboard.readText() || Promise.reject() } catch (e) { return Promise.reject(e) } })()).then(function (text) {
-                            this.clipboardPasteFrom(text);
-                        }.bind(this)).catch(function () {
-                          return Log.Debug("Failed to read system clipboard");
-                        });
-                    } catch (e) {
-                        Log.Debug("Clipboard readText error: " + e);
-                    }
-                }
-            }
+            }, 50);
         }
     }
 
@@ -1579,10 +1586,10 @@ export default class RFB extends EventTargetMixin {
             // impossible to listen for touch events on child frames (on mobile phones)
             // so we catch those events here but forward the audio unlocking to the parent window
             try {
-                window.parent.postMessage({
-                    action: "enable_audio",
-                    value: null
-                }, "*");
+                // window.parent.postMessage({
+                //     action: "enable_audio",
+                //     value: null
+                // }, "*");
             } catch (e) {
                 Log.Warn("Failed to send enable_audio message to parent: " + e);
             }
