@@ -347,22 +347,26 @@ export default class RFB extends EventTargetMixin {
 
     get pointerLock() { return this._pointerLock; }
     set pointerLock(value) {
-        if (!this._pointerLock) {
-            if (this._canvas.requestPointerLock) {
-                this._canvas.requestPointerLock();
-                this._pointerLockChanging = true;
-            } else if (this._canvas.mozRequestPointerLock) {
-                this._canvas.mozRequestPointerLock();
-                this._pointerLockChanging = true;
+        try {
+            if (!this._pointerLock) {
+                if (this._canvas.requestPointerLock) {
+                    this._canvas.requestPointerLock();
+                    this._pointerLockChanging = true;
+                } else if (this._canvas.mozRequestPointerLock) {
+                    this._canvas.mozRequestPointerLock();
+                    this._pointerLockChanging = true;
+                }
+            } else {
+                if (window.document.exitPointerLock) {
+                    window.document.exitPointerLock();
+                    this._pointerLockChanging = true;
+                } else if (window.document.mozExitPointerLock) {
+                    window.document.mozExitPointerLock();
+                    this._pointerLockChanging = true;
+                }
             }
-        } else {
-            if (window.document.exitPointerLock) {
-                window.document.exitPointerLock();
-                this._pointerLockChanging = true;
-            } else if (window.document.mozExitPointerLock) {
-                window.document.mozExitPointerLock();
-                this._pointerLockChanging = true;
-            }
+        } catch (e) {
+            Log.Warn("PointerLock operation failed: " + e);
         }
     }
 
@@ -1008,6 +1012,7 @@ export default class RFB extends EventTargetMixin {
         if (this._rfbConnectionState !== 'connected') { return; }
 
         if (this._isPrimaryDisplay) {
+            // Log.Debug("Sending KeepAlive");
             RFB.messages.keepAlive(this._sock);
         } else {
             this._proxyRFBMessage('keepAlive', []);
@@ -1226,12 +1231,18 @@ export default class RFB extends EventTargetMixin {
             } else if (e.wasClean === false || e.code === 1006) {
                 this._rfbCleanDisconnect = false;
             }
-        switch (this._rfbConnectionState) {
+            console.log("RFB socket closed. State: " + this._rfbConnectionState + ", Code: " + e.code + ", Reason: " + e.reason + ", WasClean: " + e.wasClean);
+            switch (this._rfbConnectionState) {
                 case 'connecting':
                     this._fail("Connection closed " + msg);
                     break;
                 case 'connected':
                     // Handle disconnects that were initiated server-side
+                    if (e.code === 1006 || !e.wasClean) {
+                        this._fail("Abnormal connection closure " + msg);
+                    } else {
+                        Log.Info("Server initiated disconnect " + msg);
+                    }
                     this._updateConnectionState('disconnecting');
                     this._updateConnectionState('disconnected');
                     break;
@@ -1240,12 +1251,10 @@ export default class RFB extends EventTargetMixin {
                     this._updateConnectionState('disconnected');
                     break;
                 case 'disconnected':
-                    this._fail("Unexpected server disconnect " +
-                               "when already disconnected " + msg);
+                    console.error("Unexpected server disconnect when already disconnected " + msg);
                     break;
                 default:
-                    this._fail("Unexpected server disconnect before connecting " +
-                               msg);
+                    this._fail("Unexpected server disconnect before connecting " + msg);
                     break;
             }
             this._sock.off('close');
@@ -1563,28 +1572,32 @@ export default class RFB extends EventTargetMixin {
     }
 
     _focusCanvas(event) {
-        // Hack:
-        // On most mobile phones it's possible to play audio
-        // only if it's triggered by user action. It's also
-        // impossible to listen for touch events on child frames (on mobile phones)
-        // so we catch those events here but forward the audio unlocking to the parent window
         try {
-            window.parent.postMessage({
-                action: "enable_audio",
-                value: null
-            }, "*");
+            // Hack:
+            // On most mobile phones it's possible to play audio
+            // only if it's triggered by user action. It's also
+            // impossible to listen for touch events on child frames (on mobile phones)
+            // so we catch those events here but forward the audio unlocking to the parent window
+            try {
+                window.parent.postMessage({
+                    action: "enable_audio",
+                    value: null
+                }, "*");
+            } catch (e) {
+                Log.Warn("Failed to send enable_audio message to parent: " + e);
+            }
+
+            // Re-enable pointerLock if relative cursor is enabled
+            // pointerLock must come from user initiated event
+            if (!this._pointerLock && this._pointerRelativeEnabled) {
+                this.pointerLock = true;
+            }
+
+            if (this._resendClipboardNextUserDrivenEvent) {
+                this.checkLocalClipboard();
+            }
         } catch (e) {
-            Log.Warn("Failed to send enable_audio message to parent: " + e);
-        }
-
-        // Re-enable pointerLock if relative cursor is enabled
-        // pointerLock must come from user initiated event
-        if (!this._pointerLock && this._pointerRelativeEnabled) {
-            this.pointerLock = true;
-        }
-
-        if (this._resendClipboardNextUserDrivenEvent) {
-            this.checkLocalClipboard();
+            Log.Error("Error in _focusCanvas: " + e);
         }
 
         if (!this.focusOnClick) {
@@ -1724,6 +1737,7 @@ export default class RFB extends EventTargetMixin {
      */
     _updateConnectionState(state) {
         const oldstate = this._rfbConnectionState;
+        console.log("RFB State transition: " + oldstate + " -> " + state);
 
         if (state === oldstate) {
             Log.Debug("Already in state '" + state + "', ignoring");
