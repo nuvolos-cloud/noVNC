@@ -306,7 +306,7 @@ const UI = {
                 }
             }
             UI.initSetting('enable_webp', false);
-            UI.initSetting('resize', 'off');
+            UI.initSetting('resize', 'remote');
         } else {
             UI.initSetting('clipboard_up', true);
             UI.initSetting('clipboard_down', true);

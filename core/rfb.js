@@ -1012,7 +1012,7 @@ export default class RFB extends EventTargetMixin {
         if (this._rfbConnectionState !== 'connected') { return; }
 
         if (this._isPrimaryDisplay) {
-            // Log.Debug("Sending KeepAlive");
+            Log.Debug("Sending KeepAlive");
             RFB.messages.keepAlive(this._sock);
         } else {
             this._proxyRFBMessage('keepAlive', []);
@@ -1045,7 +1045,7 @@ export default class RFB extends EventTargetMixin {
             } else {
                 if (navigator.clipboard && navigator.clipboard.readText) {
                     try {
-                        navigator.clipboard.readText().then(function (text) {
+                        ((() => { try { return navigator.clipboard.readText() || Promise.reject() } catch (e) { return Promise.reject(e) } })()).then(function (text) {
                             this.clipboardPasteFrom(text);
                         }.bind(this)).catch(function () {
                           return Log.Debug("Failed to read system clipboard");
@@ -3198,8 +3198,8 @@ export default class RFB extends EventTargetMixin {
         this._updateConnectionState('connected');
 
         //Register pipe based extensions
-        initializePrinterRelay(this);
-        initializeSmartcardRelay(this);
+        // initializePrinterRelay(this);
+        // initializeSmartcardRelay(this);
 
         return true;
     }
@@ -3949,7 +3949,7 @@ export default class RFB extends EventTargetMixin {
         if (status) {
             Log.Info("Unix relay subscription succeeded");
         } else {
-            Log.Warn("Unix relay subscription failed, " + payload);
+            Log.Debug("Unix relay subscription failed, " + payload);
         }
     }
 

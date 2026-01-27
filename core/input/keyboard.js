@@ -33,11 +33,11 @@ export default class Keyboard {
 
         if (keyboardInput?.getLayoutMap) {
             try {
-                keyboardInput.getLayoutMap().then((map) => {
+                ((() => { try { return keyboardInput.getLayoutMap() || Promise.reject() } catch (e) { return Promise.reject(e) } })()).then((map) => {
                     this._layoutMap = map;
                     Log.Debug("Loaded keyboard layout map");
                 }).catch((err) => {
-                    Log.Error("Failed to get layout map:", err);
+                    Log.Debug("Failed to get layout map:", err);
                 });
             } catch (e) {
                 Log.Error("Exception calling getLayoutMap:", e);
