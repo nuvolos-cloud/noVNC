@@ -31,7 +31,9 @@ export default class Keyboard {
 
         this._layoutMap = null;
 
-        if (keyboardInput?.getLayoutMap) {
+        // Skip getLayoutMap in iframe context to avoid SecurityError
+        const isInIframe = window.self !== window.top;
+        if (!isInIframe && keyboardInput?.getLayoutMap) {
             try {
                 ((() => { try { return keyboardInput.getLayoutMap() || Promise.reject() } catch (e) { return Promise.reject(e) } })()).then((map) => {
                     this._layoutMap = map;
