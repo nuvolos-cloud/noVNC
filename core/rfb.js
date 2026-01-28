@@ -147,7 +147,7 @@ export default class RFB extends EventTargetMixin {
         this._forcedResolutionX = null;
         this._forcedResolutionY = null;
         this._clipboardBinary = true;
-        this._resendClipboardNextUserDrivenEvent = true;
+        this._resendClipboardNextUserDrivenEvent = false;
         this._useUdp = true;
         this._hiDpi = 'hiDpi' in options ? !!options.hiDpi : false;
         this._enableQOI = false;
@@ -348,23 +348,23 @@ export default class RFB extends EventTargetMixin {
     get pointerLock() { return this._pointerLock; }
     set pointerLock(value) {
         try {
-            if (!this._pointerLock) {
-                if (this._canvas.requestPointerLock) {
-                    this._canvas.requestPointerLock();
-                    this._pointerLockChanging = true;
-                } else if (this._canvas.mozRequestPointerLock) {
-                    this._canvas.mozRequestPointerLock();
-                    this._pointerLockChanging = true;
-                }
-            } else {
-                if (window.document.exitPointerLock) {
-                    window.document.exitPointerLock();
-                    this._pointerLockChanging = true;
-                } else if (window.document.mozExitPointerLock) {
-                    window.document.mozExitPointerLock();
-                    this._pointerLockChanging = true;
-                }
+        if (!this._pointerLock) {
+            if (this._canvas.requestPointerLock) {
+                this._canvas.requestPointerLock();
+                this._pointerLockChanging = true;
+            } else if (this._canvas.mozRequestPointerLock) {
+                this._canvas.mozRequestPointerLock();
+                this._pointerLockChanging = true;
             }
+        } else {
+            if (window.document.exitPointerLock) {
+                window.document.exitPointerLock();
+                this._pointerLockChanging = true;
+            } else if (window.document.mozExitPointerLock) {
+                window.document.mozExitPointerLock();
+                this._pointerLockChanging = true;
+            }
+        }
         } catch (e) {
             Log.Warn("PointerLock operation failed: " + e);
         }
@@ -1032,23 +1032,23 @@ export default class RFB extends EventTargetMixin {
             this._resendClipboardNextUserDrivenEvent = false;
             // Delay the read slightly to allow parent iframe wrappers to finish their focus/clipboard logic
             setTimeout(() => {
-                if (this.clipboardBinary) {
+            if (this.clipboardBinary) {
                     if (navigator.clipboard && navigator.clipboard.read) {
                         try {
-                            navigator.clipboard.read().then((data) => {
-                                this.clipboardPasteDataFrom(data);
-                            }, (err) => {
-                                Log.Debug("No data in clipboard: " + err);
-                            });
+                navigator.clipboard.read().then((data) => {
+                    this.clipboardPasteDataFrom(data);
+                }, (err) => {
+                    Log.Debug("No data in clipboard: " + err);
+                }); 
                         } catch (e) {
                             Log.Debug("Clipboard read error: " + e);
                         }
                     }
-                } else {
-                    if (navigator.clipboard && navigator.clipboard.readText) {
+            } else {
+                if (navigator.clipboard && navigator.clipboard.readText) {
                         try {
                             ((() => { try { return navigator.clipboard.readText() || Promise.reject() } catch (e) { return Promise.reject(e) } })()).then(function (text) {
-                                this.clipboardPasteFrom(text);
+                        this.clipboardPasteFrom(text);
                             }.bind(this)).catch(function (e) {
                                 if (e && e.name === 'NotAllowedError') {
                                     Log.Debug("Clipboard read suppressed: Document not focused or restricted");
@@ -1058,9 +1058,9 @@ export default class RFB extends EventTargetMixin {
                             });
                         } catch (e) {
                             Log.Debug("Clipboard readText error: " + e);
-                        }
-                    }
                 }
+            }
+        }
             }, 50);
         }
     }
@@ -1358,7 +1358,7 @@ export default class RFB extends EventTargetMixin {
         this._canvas.addEventListener("gesturemove", this._eventHandlers.handleGesture);
         this._canvas.addEventListener("gestureend", this._eventHandlers.handleGesture);
 
-        this._resendClipboardNextUserDrivenEvent = true;
+        // this._resendClipboardNextUserDrivenEvent = true;
 
         // WebRTC UDP datachannel inits
         if (typeof RTCPeerConnection !== 'undefined' && this._isPrimaryDisplay) {
@@ -1536,13 +1536,19 @@ export default class RFB extends EventTargetMixin {
     }
 
     _handleFocusChange(event) {
-        this._resendClipboardNextUserDrivenEvent = true;
+        // Disable clipboard resync in iframes to prevent websocket crashes
+        // caused by clipboard permission conflicts and focus event races
+        const isInIframe = window.self !== window.top;
+        if (!isInIframe && event.type === 'focus') {
+            this._resendClipboardNextUserDrivenEvent = true;
+        }
+        
         if (event.type == 'focus' && event.currentTarget instanceof Window) {
 
             if (this._lastVisibilityState === 'visible') {
                 let lastWindow;
                 try {
-                    lastWindow = window.localStorage.getItem('lastWindow')
+                    lastWindow = window.localStorage.getItem('lastWindow');
                 } catch (e) {
                     // Accessing localStorage in an iframe can fail if 3rd party cookies are blocked
                     lastWindow = null;
@@ -1554,9 +1560,9 @@ export default class RFB extends EventTargetMixin {
                 if (lastWindow != event.currentTarget.name) {
                     this._sendLeftClickonNextMove = true;
                     try {
-                        window.localStorage.setItem('lastWindow', event.currentTarget.name)
+                        window.localStorage.setItem('lastWindow', event.currentTarget.name);
                     } catch (e) {
-                        // ignore
+                        // ignore localStorage errors in iframe context
                     }
                 }
             } else {
@@ -1580,11 +1586,11 @@ export default class RFB extends EventTargetMixin {
 
     _focusCanvas(event) {
         try {
-            // Hack:
-            // On most mobile phones it's possible to play audio
-            // only if it's triggered by user action. It's also
-            // impossible to listen for touch events on child frames (on mobile phones)
-            // so we catch those events here but forward the audio unlocking to the parent window
+        // Hack:
+        // On most mobile phones it's possible to play audio
+        // only if it's triggered by user action. It's also
+        // impossible to listen for touch events on child frames (on mobile phones)
+        // so we catch those events here but forward the audio unlocking to the parent window
             try {
                 // window.parent.postMessage({
                 //     action: "enable_audio",
@@ -1594,14 +1600,14 @@ export default class RFB extends EventTargetMixin {
                 Log.Warn("Failed to send enable_audio message to parent: " + e);
             }
 
-            // Re-enable pointerLock if relative cursor is enabled
-            // pointerLock must come from user initiated event
-            if (!this._pointerLock && this._pointerRelativeEnabled) {
-                this.pointerLock = true;
-            }
+        // Re-enable pointerLock if relative cursor is enabled
+        // pointerLock must come from user initiated event
+        if (!this._pointerLock && this._pointerRelativeEnabled) {
+            this.pointerLock = true;
+        }
 
-            if (this._resendClipboardNextUserDrivenEvent) {
-                this.checkLocalClipboard();
+        if (this._resendClipboardNextUserDrivenEvent) {
+            this.checkLocalClipboard();
             }
         } catch (e) {
             Log.Error("Error in _focusCanvas: " + e);
@@ -2235,7 +2241,9 @@ export default class RFB extends EventTargetMixin {
         const mappedButton = this.mouseButtonMapper.get(ev.button);
         switch (ev.type) {
             case 'mousedown':
-                ev.preventDefault();
+                if (this._display.screens.length === 0 || window.self === window.top) {
+                	ev.preventDefault();
+                }
                 setCapture(this._canvas);
 
                 // Translate CMD+Click into CTRL+click on MacOs
@@ -3956,7 +3964,7 @@ export default class RFB extends EventTargetMixin {
         if (status) {
             Log.Info("Unix relay subscription succeeded");
         } else {
-            Log.Debug("Unix relay subscription failed, " + payload);
+            Log.Warn("Unix relay subscription failed, " + payload);
         }
     }
 
