@@ -1198,28 +1198,20 @@ export default class RFB extends EventTargetMixin {
   }
 
   checkLocalClipboard() {
-    Log.Info(
-      `checkLocalClipboard called - clipboardUp: ${this.clipboardUp}, clipboardSeamless: ${this.clipboardSeamless}, resendFlag: ${this._resendClipboardNextUserDrivenEvent}`,
-    );
     if (
       this.clipboardUp &&
       this.clipboardSeamless &&
       this._resendClipboardNextUserDrivenEvent
     ) {
       this._resendClipboardNextUserDrivenEvent = false;
-      Log.Info(
-        "Starting clipboard read attempt (immediate - no delay for iframe compatibility)",
-      );
       // Try immediate read for iframe compatibility - clipboard access requires recent user gesture
       // setTimeout removed to preserve user gesture context
       (() => {
         if (this.clipboardBinary) {
-          Log.Info("Attempting binary clipboard read");
           if (navigator.clipboard && navigator.clipboard.read) {
             try {
               navigator.clipboard.read().then(
                 (data) => {
-                  Log.Info("Binary clipboard read successful", data);
                   this.clipboardPasteDataFrom(data);
                 },
                 (err) => {
@@ -1233,7 +1225,6 @@ export default class RFB extends EventTargetMixin {
             Log.Warn("navigator.clipboard.read not available");
           }
         } else {
-          Log.Info("Attempting text clipboard read");
           if (navigator.clipboard && navigator.clipboard.readText) {
             try {
               (() => {
@@ -1245,10 +1236,6 @@ export default class RFB extends EventTargetMixin {
               })()
                 .then(
                   function (text) {
-                    Log.Info(
-                      "Text clipboard read successful, length: " +
-                        (text ? text.length : 0),
-                    );
                     this.clipboardPasteFrom(text);
                   }.bind(this),
                 )
@@ -1269,10 +1256,6 @@ export default class RFB extends EventTargetMixin {
           }
         }
       })();
-    } else {
-      Log.Warn(
-        `Clipboard check skipped - conditions not met: clipboardUp=${this.clipboardUp}, clipboardSeamless=${this.clipboardSeamless}, resendFlag=${this._resendClipboardNextUserDrivenEvent}`,
-      );
     }
   }
 
@@ -1872,10 +1855,8 @@ export default class RFB extends EventTargetMixin {
   _handleFocusChange(event) {
     // Clipboard resync enabled for iframes with clipboard-read/clipboard-write permissions
     const isInIframe = window.self !== window.top;
-    Log.Info(`Focus change event: ${event.type}, In iframe: ${isInIframe}`);
     if (event.type === "focus") {
       this._resendClipboardNextUserDrivenEvent = true;
-      Log.Info("Clipboard resync flag set to true on focus event");
     }
 
     if (event.type == "focus" && event.currentTarget instanceof Window) {
@@ -1943,7 +1924,6 @@ export default class RFB extends EventTargetMixin {
       }
 
       if (this._resendClipboardNextUserDrivenEvent) {
-        Log.Info("User-driven event triggered, checking local clipboard");
         this.checkLocalClipboard();
       }
     } catch (e) {

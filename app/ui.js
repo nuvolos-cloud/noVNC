@@ -372,7 +372,7 @@ const UI = {
       } else {
         UI.initSetting("clipboard_seamless", true);
       }
-      UI.initSetting("enable_webp", false);
+      UI.initSetting("enable_webp", true);
       UI.initSetting("resize", "remote");
     } else {
       UI.initSetting("clipboard_up", true);
