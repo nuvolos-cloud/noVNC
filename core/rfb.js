@@ -1270,7 +1270,9 @@ export default class RFB extends EventTargetMixin {
         }
       })();
     } else {
-      Log.Warn("Clipboard check skipped - conditions not met");
+      Log.Warn(
+        `Clipboard check skipped - conditions not met: clipboardUp=${this.clipboardUp}, clipboardSeamless=${this.clipboardSeamless}, resendFlag=${this._resendClipboardNextUserDrivenEvent}`,
+      );
     }
   }
 
