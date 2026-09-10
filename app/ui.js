@@ -1628,6 +1628,9 @@ const UI = {
     let value = UI.getSetting(name);
 
     const ctrl = document.getElementById("noVNC_setting_" + name);
+    if (!ctrl) {
+      return value;
+    }
     if (ctrl.type === "checkbox") {
       ctrl.checked = value;
     } else if (typeof ctrl.options !== "undefined") {
@@ -1684,7 +1687,7 @@ const UI = {
     const ctrl = document.getElementById("noVNC_setting_" + name);
     let val = WebUtil.readSetting(name);
 
-    if (val != null && ctrl.type === "checkbox") {
+    if (val != null && ctrl && ctrl.type === "checkbox") {
       const str = String(val).toLowerCase();
       const falseStrings = ["0", "no", "false"];
       if (falseStrings.includes(str)) {
