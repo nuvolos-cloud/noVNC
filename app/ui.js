@@ -1910,7 +1910,7 @@ const UI = {
       var curvalue = document.getElementById("noVNC_clipboard_text").value;
       if (curvalue != e.detail.text) {
         Log.Debug(
-          ">> UI.clipboardReceive: " + e.detail.text.substr(0, 40) + "...",
+          ">> UI.clipboardReceive: " + e.detail.text.length + " chars",
         );
         document.getElementById("noVNC_clipboard_text").value = e.detail.text;
         Log.Debug("<< UI.clipboardReceive");
@@ -1955,7 +1955,7 @@ const UI = {
 
   clipboardSend() {
     const text = document.getElementById("noVNC_clipboard_text").value;
-    Log.Debug(">> UI.clipboardSend: " + text.substr(0, 40) + "...");
+    Log.Debug(">> UI.clipboardSend: " + text.length + " chars");
     UI.rfb.clipboardPasteFrom(text);
     Log.Debug("<< UI.clipboardSend");
   },

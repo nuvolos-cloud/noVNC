@@ -1495,6 +1495,7 @@ export default class RFB extends EventTargetMixin {
     let dataset = [];
     let mimes = ["text/plain"];
     dataset.push(data);
+    Log.Info("Clipboard send: text/plain, " + data.length + " bytes");
 
     if (this._isPrimaryDisplay) {
       RFB.messages.sendBinaryClipboard(this._sock, dataset, mimes);
@@ -1564,6 +1565,13 @@ export default class RFB extends EventTargetMixin {
     }
 
     if (dataset.length > 0) {
+      Log.Info(
+        "Clipboard send: " +
+          mimes.join(",") +
+          ", " +
+          dataset.reduce((n, d) => n + d.length, 0) +
+          " bytes",
+      );
       if (this._isPrimaryDisplay) {
         RFB.messages.sendBinaryClipboard(this._sock, dataset, mimes);
       } else {
@@ -4486,6 +4494,7 @@ export default class RFB extends EventTargetMixin {
           }
 
           textData = textData.replace("\r\n", "\n");
+          Log.Info("Clipboard receive: text, " + textData.length + " chars");
 
           this.dispatchEvent(
             new CustomEvent("clipboard", { detail: { text: textData } }),
