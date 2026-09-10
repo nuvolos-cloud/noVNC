@@ -4,13 +4,17 @@ import { isTouchDevice, isSafari, hasScrollbarGutter, dragThreshold, supportsBin
     from '../core/util/browser.js';
 import { MouseButtonMapper, XVNC_BUTTONS } from "../core/mousebuttonmapper.js";
 import * as Log from '../core/util/logging.js';
+import {showNotification} from "../core/util/notifications";
 
 const UI = {
     connected: false,
     screenID: null,
     screen: {},
     screens: [],
-    supportsBroadcastChannel: (typeof BroadcastChannel !== "undefined"),
+    multiMonitorSupport: (typeof BroadcastChannel !== "undefined" && typeof SharedWorker !== "undefined"),
+    get supportsMultiMonitor() {
+        return this.multiMonitorSupport;
+    },
     controlChannel: null,
     draggingTab: false,
     //Initial Loading of the UI
@@ -20,9 +24,14 @@ const UI = {
 
     //Render default UI
     start() {
-        window.addEventListener("unload", (e) => { 
-            if (UI.rfb) { 
-                UI.disconnect(); 
+        window.addEventListener("beforeunload", (e) => {
+            // Clean up secondary display connection before window closes
+            const urlParams = new URLSearchParams(window.location.search);
+            const windowId = urlParams.get('windowId');
+
+            if (UI.rfb && windowId) {
+                // This is a secondary display - unregister it without disconnecting main session
+                UI.rfb._unregisterSecondaryDisplay();
             }
         });
 
@@ -132,7 +141,6 @@ const UI = {
     },
 
     connect() {
-
         let details = null
         const initialAutoPlacementValue = window.localStorage.getItem('autoPlacement')
         if (initialAutoPlacementValue === null) {
@@ -146,16 +154,17 @@ const UI = {
             UI.rfb = new RFB(document.getElementById('noVNC_container'),
                         document.getElementById('noVNC_keyboardinput'),
                         "", //URL
-                        { 
+                        {
                             shared: UI.getSetting('shared', true),
                             repeaterID: UI.getSetting('repeaterID', false),
                             credentials: { password: null },
-                            hiDpi: UI.getSetting('enable_hidpi', true, false)
+                            hiDpi: UI.getSetting('enable_hidpi', true, false),
+                            videoRenderingMode: UI.getSetting('video_rendering_mode')
                         },
+                        null,
                         false // Not a primary display
                     );
         }
-        
 
         UI.rfb.addEventListener("connect", UI.connectFinished);
         //UI.rfb.addEventListener("disconnect", UI.disconnectFinished);
@@ -200,7 +209,7 @@ const UI = {
             UI.rfb.enableQOI = true;
         }
 
-        if (UI.supportsBroadcastChannel) {
+        if (UI.supportsMultiMonitor) {
             UI.controlChannel = new BroadcastChannel(UI.rfb.connectionID);
             UI.controlChannel.addEventListener('message', UI.handleControlMessage)
         }
@@ -239,7 +248,7 @@ const UI = {
         document.documentElement.classList.remove("noVNC_disconnected");
 
         const transitionElem = document.getElementById("noVNC_transition_text");
-        if (WebUtil.isInsideKasmVDI())         
+        if (WebUtil.isInsideKasmVDI())
         {
             try {
                 parent.postMessage({ action: 'connection_state', value: state}, '*' );
@@ -289,12 +298,8 @@ const UI = {
         UI.screens = data.screens
         const screen = data.screens.find(el => el.id === UI.screenID)
         if (screen) {
-            document.getElementById('noVNC_identify_monitor').innerHTML = screen.num
-            document.getElementById('noVNC_identify_monitor').classList.add("show")
-            document.querySelector('title').textContent = 'Display ' + screen.num + ' - ' + UI.screenID
-            setTimeout(() => {
-                document.getElementById('noVNC_identify_monitor').classList.remove("show")
-            }, 3500)
+            showNotification(screen.num);
+            document.querySelector('title').textContent = 'Display ' + screen.num + ' - ' + UI.screenID;
         }
     },
 
@@ -368,10 +373,11 @@ const UI = {
     disconnect() {
         if (UI.rfb) {
             UI.rfb.disconnect();
-            if (UI.supportsBroadcastChannel) {
+            if (UI.supportsMultiMonitor) {
                 UI.controlChannel.removeEventListener('message', UI.handleControlMessage);
                 UI.rfb.removeEventListener("connect", UI.connectFinished);
-            }    
+            }
+            UI.rfb = null;
         }
     },
 

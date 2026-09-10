@@ -37,22 +37,30 @@ import DES from "./des.js";
 import KeyTable from "./input/keysym.js";
 import XtScancode from "./input/xtscancodes.js";
 import { encodings } from "./encodings.js";
+import {
+    FRAME_RATE_MAX,
+    FRAME_RATE_MIN,
+    frameRateToPseudoEncoding,
+    isValidFrameRate,
+} from "./util/frame-rate.js";
+import { messages } from "./messages.js";
 import { MouseButtonMapper, xvncButtonToMask } from "./mousebuttonmapper.js";
 
 import RawDecoder from "./decoders/raw.js";
 import CopyRectDecoder from "./decoders/copyrect.js";
 import RREDecoder from "./decoders/rre.js";
 import HextileDecoder from "./decoders/hextile.js";
+import KasmVideoDecoder from "./decoders/kasmvideo.js";
 import TightDecoder from "./decoders/tight.js";
 import TightPNGDecoder from "./decoders/tightpng.js";
 import UDPDecoder from "./decoders/udp.js";
-import { toSignedRelative16bit } from "./util/int.js";
 
 // How many seconds to wait for a disconnect to finish
 const DISCONNECT_TIMEOUT = 3;
 const DEFAULT_BACKGROUND = "rgb(40, 40, 40)";
-const CLIENT_MSG_TYPE_KEEPALIVE = 184;
-const SERVER_MSG_TYPE_DISCONNECT_NOTIFY = 185;
+const CLIENT_MSG_TYPE_KEEPALIVE = 185;
+const SERVER_MSG_TYPE_DISCONNECT_NOTIFY = 186;
+import {FPS, UI_SETTING_PROFILE_OPTIONS} from '../app/constants.js';
 
 // Minimum wait (ms) between two mouse moves
 const MOUSE_MOVE_DELAY = 17;
@@ -83,7 +91,7 @@ const extendedClipboardActionNotify = 1 << 27;
 const extendedClipboardActionProvide = 1 << 28;
 
 export default class RFB extends EventTargetMixin {
-  constructor(target, touchInput, urlOrChannel, options, isPrimaryDisplay) {
+  constructor(target, touchInput, urlOrChannel, options, videoCodecs, isPrimaryDisplay) {
     if (!target) {
       throw new Error("Must specify target");
     }
@@ -109,6 +117,10 @@ export default class RFB extends EventTargetMixin {
     this._repeaterID = options.repeaterID || "";
     this._wsProtocols = options.wsProtocols || ["binary"];
     this._isPrimaryDisplay = isPrimaryDisplay !== false;
+    this.videoCodecs = videoCodecs;
+    this._videoRenderingMode = options.videoRenderingMode || "canvas2d";
+    this._preserveLastActiveAtOnConnect =
+      !!options.preserveLastActiveAtOnConnect;
 
     // Internal state
     this._rfbConnectionState = "";
@@ -148,10 +160,11 @@ export default class RFB extends EventTargetMixin {
     this._dynamicQualityMin = 3;
     this._dynamicQualityMax = 9;
     this._videoArea = 65;
+    this._pendingVideoQualityRefresh = false;
     this._videoTime = 5;
     this._videoOutTime = 3;
     this._videoScaling = 2;
-    this._frameRate = 30;
+    this._frameRate = FPS.MIN;
     this._maxVideoResolutionX = 960;
     this._maxVideoResolutionY = 540;
     this._forcedResolutionX = null;
@@ -176,6 +189,14 @@ export default class RFB extends EventTargetMixin {
     this._udpTransitFailures = 0; //Failures in transit after successful upgrade
 
     this._trackFrameStats = false;
+    // Client-side input-to-photon latency measurement
+    this._inputLatencyEnabled = false;
+    this._pendingInputs = [];
+    this._latencyStats = [];
+    this._maxPendingInputs = 50;
+    this._nextMeasurementId = 1;
+    this._inflightMeasurementId = null;
+    this._pendingLatencyRender = null;
 
     this._clipboardText = null;
     this._clipboardServerCapabilitiesActions = {};
@@ -215,8 +236,8 @@ export default class RFB extends EventTargetMixin {
     this._mouseButtonMask = 0;
     this._mouseLastMoveTime = 0;
     this._pointerLock = false;
-    this._pointerLockPos = { x: 0, y: 0 };
-    this._pointerRelativeEnabled = false;
+    this._directMouseEnabled = false;
+    this._directMouseRemainder = { x: 0, y: 0 };
     this._mouseLastPinchAndZoomTime = 0;
     this._viewportDragging = false;
     this._viewportDragPos = {};
@@ -234,14 +255,18 @@ export default class RFB extends EventTargetMixin {
     this._gestureLastMagnitudeY = 0;
 
     // Secondary Displays
-    this._supportsBroadcastChannel = typeof BroadcastChannel !== "undefined";
-    if (this._supportsBroadcastChannel) {
+    this._supportsMultiMonitor =
+      typeof BroadcastChannel !== "undefined" &&
+      typeof SharedWorker !== "undefined";
+    if (this._supportsMultiMonitor) {
       this._controlChannel = new BroadcastChannel(this._connectionID);
       this._controlChannel.addEventListener(
         "message",
         this._handleControlMessage.bind(this),
       );
       Log.Debug("Attached to registrationChannel for secondary displays.");
+    } else {
+      Log.Warn("This browser does not support multi-monitor setups.");
     }
     if (!this._isPrimaryDisplay) {
       this._screenIndex = 2;
@@ -299,18 +324,28 @@ export default class RFB extends EventTargetMixin {
     // NB: nothing that needs explicit teardown should be done
     // before this point, since this can throw an exception
     try {
-      this._display = new Display(this._canvas, this._isPrimaryDisplay);
+      this._display = new Display(
+        this._canvas,
+        this,
+        this._isPrimaryDisplay,
+        this._videoRenderingMode,
+      );
     } catch (exc) {
       Log.Error("Display exception: " + exc);
       throw exc;
     }
     this._display.onflush = this._onFlush.bind(this);
+    this._display.onFrameRendered = this._onFrameRendered.bind(this);
 
     // populate decoder array with objects
     this._decoders[encodings.encodingRaw] = new RawDecoder();
     this._decoders[encodings.encodingCopyRect] = new CopyRectDecoder();
     this._decoders[encodings.encodingRRE] = new RREDecoder();
     this._decoders[encodings.encodingHextile] = new HextileDecoder();
+    this._decoders[encodings.encodingKasmVideo] = new KasmVideoDecoder(
+      this,
+      this._display,
+    );
     this._decoders[encodings.encodingTight] = new TightDecoder(this._display);
     this._decoders[encodings.encodingTightPNG] = new TightPNGDecoder();
     this._decoders[encodings.encodingUDP] = new UDPDecoder();
@@ -329,8 +364,7 @@ export default class RFB extends EventTargetMixin {
     // ===== PROPERTIES =====
     this.dragViewport = false;
     this.focusOnClick = true;
-    this.lastActiveAt = Date.now();
-
+    this.lastActiveAt = options.lastActiveAt || Date.now();
     this._viewOnly = false;
     this._clipViewport = false;
     this._scaleViewport = false;
@@ -348,6 +382,11 @@ export default class RFB extends EventTargetMixin {
     this._qualityLevel = 6;
     this._compressionLevel = 2;
     this._clipHash = 0;
+    this._hwEncoderProfile = UI_SETTING_PROFILE_OPTIONS.BASELINE;
+    this._gop = this._frameRate;
+    this._videoStreamQuality = 23;
+    this._qualityPreset = 3;
+    this._streamMode = encodings.pseudoEncodingStreamingModeJpegWebp;
   }
 
   // ===== PROPERTIES =====
@@ -391,26 +430,11 @@ export default class RFB extends EventTargetMixin {
   }
 
   get pointerRelative() {
-    return this._pointerRelativeEnabled;
+    return this._directMouseEnabled;
   }
   set pointerRelative(value) {
-    this._pointerRelativeEnabled = value;
-    if (value) {
-      let max_w =
-        this._display.scale === 1
-          ? this._fbWidth
-          : this._fbWidth * this._display.scale;
-      let max_h =
-        this._display.scale === 1
-          ? this._fbHeight
-          : this._fbHeight * this._display.scale;
-      this._pointerLockPos.x = Math.floor(max_w / 2);
-      this._pointerLockPos.y = Math.floor(max_h / 2);
-
-      // reset the cursor position to center
-      this._mousePos = { x: this._pointerLockPos.x, y: this._pointerLockPos.y };
-      this._cursor.move(this._pointerLockPos.x, this._pointerLockPos.y);
-    }
+    this._directMouseEnabled = value;
+    this._directMouseRemainder = { x: 0, y: 0 };
   }
 
   get keyboard() {
@@ -727,8 +751,10 @@ export default class RFB extends EventTargetMixin {
     return this._frameRate;
   }
   set frameRate(value) {
-    if (!Number.isInteger(value) || value < 1 || value > 120) {
-      Log.Error("frame rate must be an integer between 1 and 120");
+    if (!isValidFrameRate(value)) {
+      Log.Error(
+        `frame rate must be an integer between ${FRAME_RATE_MIN} and ${FRAME_RATE_MAX}`,
+      );
       return;
     }
 
@@ -839,6 +865,14 @@ export default class RFB extends EventTargetMixin {
     }
   }
 
+  get isConnected() {
+    return this._rfbConnectionState === "connected";
+  }
+
+  get isConnecting() {
+    return this._rfbConnectionState === "connecting";
+  }
+
   get statsFps() {
     return this._display.fps;
   }
@@ -886,6 +920,61 @@ export default class RFB extends EventTargetMixin {
     if (value !== this._threading) {
       this._threading = value;
       this._display.threading = value;
+    }
+  }
+
+  get hwEncoderProfile() {
+    return this._hwEncoderProfile;
+  }
+  set hwEncoderProfile(value) {
+    if (value !== this._hwEncoderProfile) {
+      this._hwEncoderProfile = value;
+      this._pendingApplyEncodingChanges = true;
+    }
+  }
+
+  get gop() {
+    return this._gop;
+  }
+  set gop(value) {
+    if (value !== this._gop) {
+      this._gop = value;
+      this._pendingApplyEncodingChanges = true;
+    }
+  }
+
+  get videoStreamQuality() {
+    return this._videoStreamQuality;
+  }
+  set videoStreamQuality(value) {
+    if (value !== this._videoStreamQuality) {
+      this._videoStreamQuality = value;
+      this._pendingApplyEncodingChanges = true;
+      this._pendingVideoQualityRefresh = true;
+    }
+  }
+
+  get qualityPreset() {
+    return this._qualityPreset;
+  }
+  set qualityPreset(value) {
+    if (value !== this._qualityPreset) {
+      this._qualityPreset = value;
+      this._pendingApplyEncodingChanges = true;
+    }
+  }
+
+  get streamMode() {
+    return this._streamMode;
+  }
+  set streamMode(value) {
+    if (value !== this._streamMode) {
+      this._streamMode = value;
+      this._pendingApplyEncodingChanges = true;
+      if (this._display) {
+        this._display.preferSoftwareDecode =
+          value === encodings.pseudoEncodingStreamingModeAVCNVENC;
+      }
     }
   }
 
@@ -1048,8 +1137,12 @@ export default class RFB extends EventTargetMixin {
 
       if (this._pendingApplyEncodingChanges) {
         this._sendEncodings();
-      }
 
+        if (this._pendingVideoQualityRefresh) {
+          this._requestFullRefresh();
+          this._pendingVideoQualityRefresh = false;
+        }
+      }
       this._pendingApplyVideoRes = false;
       this._pendingApplyEncodingChanges = false;
       this._pendingApplyResolutionChange = false;
@@ -1137,11 +1230,13 @@ export default class RFB extends EventTargetMixin {
     if (code !== null) {
       this._setLastActive();
     }
-
     if (down === undefined) {
       this.sendKey(keysym, code, true);
       this.sendKey(keysym, code, false);
       return;
+    }
+    if (down && this._inputLatencyEnabled) {
+      this._trackInputEvent("keydown", 0, 0);
     }
 
     const scancode = XtScancode[code];
@@ -1175,6 +1270,125 @@ export default class RFB extends EventTargetMixin {
       }
     }
   }
+
+    _sendDirectMouse(dx, dy, buttonMask, scrollDX, scrollDY) {
+        if (this._rfbConnectionState !== 'connected') { return; }
+        if (this._viewOnly) { return; }
+        if (!this._isPrimaryDisplay) { return; }
+        RFB.messages.directMouseEvent(this._sock, dx, dy, buttonMask, scrollDX, scrollDY);
+    }
+
+    _trackInputEvent(eventType, x, y) {
+        const now = performance.now();
+        const measurementId = this._nextMeasurementId++;
+
+        if (this._nextMeasurementId > 0xFFFFFFFF) {
+            this._nextMeasurementId = 1;
+        }
+
+        // Drop entries older than 2 seconds — they will never be matched
+        while (this._pendingInputs.length > 0 &&
+               (now - this._pendingInputs[0].timestamp) > 2000) {
+            this._pendingInputs.shift();
+        }
+
+        this._pendingInputs.push({
+            timestamp: now,
+            type: eventType,
+            x: x,
+            y: y,
+            measurementId: measurementId
+        });
+
+        // Only send one measurement request at a time. If a previous
+        // request is still in flight, skip sending — the server uses a
+        // single slot so it would overwrite the old ID anyway, and the
+        // near-instant response for an ID that arrived mid-frame-update
+        // produces false low-latency readings.
+        if (this._rfbConnectionState === 'connected' &&
+            this._inflightMeasurementId === null) {
+            this._inflightMeasurementId = measurementId;
+            RFB.messages.latencyMeasurementRequest(this._sock, measurementId);
+        }
+    }
+
+    _recordLatencyMeasurement(measurement) {
+        this._latencyStats.push(measurement);
+
+        // Keep only last 50 measurements for responsive averages
+        while (this._latencyStats.length > 50) {
+            this._latencyStats.shift();
+        }
+
+        // Calculate and emit statistics
+        if (this._latencyStats.length >= 3) {
+            const totalStats = this._calculateStats(this._latencyStats.map(m => m.totalLatency));
+            const networkStats = this._calculateStats(this._latencyStats.map(m => m.networkLatency));
+            const renderStats = this._calculateStats(this._latencyStats.map(m => m.clientRenderTime));
+
+            Log.Debug(`[latency stats] samples=${this._latencyStats.length} total avg=${totalStats.avg.toFixed(1)}ms p50=${totalStats.p50.toFixed(1)}ms p95=${totalStats.p95.toFixed(1)}ms network avg=${networkStats.avg.toFixed(1)}ms render avg=${renderStats.avg.toFixed(1)}ms`);
+
+            // Emit event for UI
+            this.dispatchEvent(new CustomEvent('inputlatency', {
+                detail: {
+                    latest: measurement.totalLatency,
+                    average: totalStats.avg,
+                    min: totalStats.min,
+                    max: totalStats.max,
+                    p50: totalStats.p50,
+                    p95: totalStats.p95,
+                    p99: totalStats.p99,
+                    networkAvg: networkStats.avg,
+                    networkP95: networkStats.p95,
+                    renderAvg: renderStats.avg,
+                    renderP95: renderStats.p95,
+                    samples: this._latencyStats.length
+                }
+            }));
+
+            // Log periodically
+            if (this._latencyStats.length % 100 === 0)
+                Log.Info(`Input latency: total avg=${totalStats.avg.toFixed(1)}ms p95=${totalStats.p95.toFixed(1)}ms network avg=${networkStats.avg.toFixed(1)}ms render avg=${renderStats.avg.toFixed(1)}ms (${this._latencyStats.length} samples)`);
+        }
+    }
+
+    _calculateStats(values) {
+        const sorted = [...values].sort((a, b) => a - b);
+        const sum = values.reduce((a, b) => a + b, 0);
+        const n = sorted.length;
+        const percentile = (p) => sorted[Math.min(Math.ceil(n * p) - 1, n - 1)];
+
+        return {
+            avg: sum / n,
+            min: sorted[0],
+            max: sorted[n - 1],
+            p50: percentile(0.50),
+            p95: percentile(0.95),
+            p99: percentile(0.99)
+        };
+    }
+
+    // Public API for enabling/disabling latency measurement
+    enableInputLatencyMeasurement(enabled) {
+        this._inputLatencyEnabled = enabled;
+
+        if (!enabled) {
+            this._pendingInputs = [];
+            this._pendingLatencyRender = null;
+            this._inflightMeasurementId = null;
+        }
+
+        Log.Info(`Input latency measurement ${enabled ? 'enabled' : 'disabled'}`);
+    }
+
+    getInputLatencyStats() {
+        if (this._latencyStats.length === 0) {
+            return null;
+        }
+
+        const latencies = this._latencyStats.map(m => m.latency);
+        return this._calculateStats(latencies);
+    }
 
   sendKeepAlive() {
     if (this._rfbConnectionState !== "connected") {
@@ -1360,7 +1574,9 @@ export default class RFB extends EventTargetMixin {
 
   requestBottleneckStats() {
     if (this._isPrimaryDisplay) {
-      RFB.messages.requestStats(this._sock);
+      RFB.messages.requestStats(this._sock, messages.msgTypeRequestStats);
+      RFB.messages.requestStats(this._sock, messages.msgTypeNetworkStats);
+      RFB.messages.requestStats(this._sock, messages.msgTypeSystemStats);
     }
   }
 
@@ -2063,6 +2279,17 @@ export default class RFB extends EventTargetMixin {
   }
 
   // Gets the the size of the available screen
+  _requestFullRefresh() {
+    RFB.messages.fbUpdateRequest(
+      this._sock,
+      false,
+      0,
+      0,
+      this._fbWidth,
+      this._fbHeight,
+    );
+  }
+
   _screenSize(limited) {
     return this._display.getScreenSize(
       this.videoQuality,
@@ -2947,18 +3174,11 @@ export default class RFB extends EventTargetMixin {
       return;
     }
 
-    if (this._pointerLock && this._pointerRelativeEnabled) {
-      // Use releative cursor position
-      var rel_16_x = toSignedRelative16bit(x - this._pointerLockPos.x);
-      var rel_16_y = toSignedRelative16bit(y - this._pointerLockPos.y);
-
-      RFB.messages.pointerEvent(this._sock, rel_16_x, rel_16_y, mask);
-
-      // reset the cursor position to center
-      this._mousePos = { x: this._pointerLockPos.x, y: this._pointerLockPos.y };
-      this._cursor.move(this._pointerLockPos.x, this._pointerLockPos.y);
+    if (this._pointerLock && this._directMouseEnabled) {
+      // Direct drive: button state changes only (movement is sent raw from _handleMouse)
+      this._sendDirectMouse(0, 0, mask, 0, 0);
     } else {
-      RFB.messages.pointerEvent(
+      RFB.messages.pointerEventClamped(
         this._sock,
         this._display.absX(x),
         this._display.absY(y),
@@ -2975,8 +3195,10 @@ export default class RFB extends EventTargetMixin {
       return;
     } // View only, skip mouse events
 
-    if (this._isPrimaryDisplay) {
-      RFB.messages.pointerEvent(
+    if (this._pointerLock && this._directMouseEnabled) {
+      this._sendDirectMouse(0, 0, this._mouseButtonMask, dX, dY);
+    } else if (this._isPrimaryDisplay) {
+      RFB.messages.pointerEventClamped(
         this._sock,
         this._display.absX(x),
         this._display.absY(y),
@@ -3969,7 +4191,7 @@ export default class RFB extends EventTargetMixin {
       Log.Debug("Multiple displays detected, disabling copyrect encoding.");
     }
     // Only supported with full depth support
-    if (this._fbDepth == 24) {
+    if (this._fbDepth === 24) {
       encs.push(encodings.encodingTight);
       encs.push(encodings.encodingTightPNG);
       encs.push(encodings.encodingHextile);
@@ -3990,6 +4212,7 @@ export default class RFB extends EventTargetMixin {
     encs.push(encodings.pseudoEncodingDesktopName);
     encs.push(encodings.pseudoEncodingExtendedClipboard);
     encs.push(encodings.pseudoEncodingKasmDisconnectNotify);
+    encs.push(encodings.pseudoEncodingDirectMouse);
     if (this._hasWebp()) encs.push(encodings.pseudoEncodingWEBP);
     if (this._enableQOI) encs.push(encodings.pseudoEncodingQOI);
 
@@ -4013,15 +4236,24 @@ export default class RFB extends EventTargetMixin {
       encodings.pseudoEncodingVideoOutTimeLevel1 + this.videoOutTime - 1,
     );
     encs.push(encodings.pseudoEncodingVideoScalingLevel0 + this.videoScaling);
-    encs.push(encodings.pseudoEncodingFrameRateLevel10 + this.frameRate - 10);
+    encs.push(frameRateToPseudoEncoding(this.frameRate));
     encs.push(encodings.pseudoEncodingMaxVideoResolution);
+
+    // Order is important: first options, then streaming mode
+    // encs.push(encodings.pseudoEncodingHardwareProfile0 + this.hwEncoderProfile);
+    encs.push(encodings.pseudoEncodingGOP1 + this.gop);
+    encs.push(
+      encodings.pseudoEncodingStreamingVideoQualityLevel0 +
+        this.videoStreamQuality,
+    );
+    encs.push(this.streamMode);
 
     // preferBandwidth choses preset settings. Since we expose all the settings, lets not pass this
     if (this.preferBandwidth)
       // must be last - server processes in reverse order
       encs.push(encodings.pseudoEncodingPreferBandwidth);
 
-    if (this._fbDepth == 24) {
+    if (this._fbDepth === 24) {
       encs.push(encodings.pseudoEncodingVMwareCursor);
       encs.push(encodings.pseudoEncodingCursor);
     }
@@ -4447,6 +4679,82 @@ export default class RFB extends EventTargetMixin {
     return true;
   }
 
+    _handleServerStatsMsg(stats) {
+        this._sock.rQskipBytes(3);  // Padding
+        const length = this._sock.rQshift32();
+        if (this._sock.rQwait("KASM " + stats, length, 8)) {
+            return false;
+        }
+
+        const text = this._sock.rQshiftStr(length);
+
+        Log.Debug("Received KASM '" + stats + "':");
+        // Log.Debug(text);
+        this.dispatchEvent(new CustomEvent(
+            stats,
+            {detail: {text: text}}));
+
+        return true;
+    }
+
+    _handleLatencyMeasurementResponse() {
+        if (this._sock.rQwait("LatencyMeasurement", 7, 1))
+            return false;
+
+        this._sock.rQskipBytes(3);
+        const measurementId = this._sock.rQshift32();
+
+        // Clear in-flight tracker so the next input can send a new request
+        if (this._inflightMeasurementId === measurementId) {
+            this._inflightMeasurementId = null;
+        }
+
+        const idx = this._pendingInputs.findIndex(
+            input => input.measurementId === measurementId
+        );
+
+        if (idx !== -1) {
+            const entry = this._pendingInputs[idx];
+            // Remove the matched entry and all older unmatched entries
+            this._pendingInputs.splice(0, idx + 1);
+
+            this._pendingLatencyRender = {
+                inputTimestamp: entry.timestamp,
+                echoTimestamp: performance.now(),
+                type: entry.type,
+                measurementId: measurementId
+            };
+        }
+
+        return true;
+    }
+
+    _onFrameRendered() {
+        if (!this._pendingLatencyRender)
+            return;
+
+        const now = performance.now();
+        const pending = this._pendingLatencyRender;
+        this._pendingLatencyRender = null;
+
+        if (now - pending.echoTimestamp > 1000)
+            return;
+
+        const totalLatency = now - pending.inputTimestamp;
+        const clientRenderTime = now - pending.echoTimestamp;
+        const networkLatency = totalLatency - clientRenderTime;
+
+        Log.Debug(`[latency] id=${pending.measurementId} type=${pending.type} total=${totalLatency.toFixed(1)}ms network=${networkLatency.toFixed(1)}ms render=${clientRenderTime.toFixed(1)}ms`);
+        this._recordLatencyMeasurement({
+            totalLatency,
+            clientRenderTime,
+            networkLatency,
+            type: pending.type,
+            timestamp: now,
+            measurementId: pending.measurementId
+        });
+    }
+
   _handleServerFenceMsg() {
     if (this._sock.rQwait("ServerFence header", 8, 1)) {
       return false;
@@ -4841,6 +5149,65 @@ export default class RFB extends EventTargetMixin {
     processRelay && processRelay(payload);
   }
 
+    _handleServerVideoEncoders() {
+        if (this._sock.rQwait("VideoEncoders header", 1, 1))
+            return false;
+
+        let num = this._sock.rQshift8();
+
+        // Each encoder has variable length data:
+        // codec(4) + minQuality(4) + maxQuality(4) + numPresets(1) + presets(4*n)
+        // Minimum is 13 bytes per encoder
+        if (this._sock.rQwait("VideoEncoders data", num * 13, 1))
+            return false;
+
+        let serverSupportedEncoders = [];
+        let codecConfigurations = {};
+
+        for (let i = 0; i < num; i++) {
+            const codec = this._sock.rQshift32();
+
+            const minQuality = this._sock.rQshift32();
+            const maxQuality = this._sock.rQshift32();
+
+            const numPresets = this._sock.rQshift8();
+            if (numPresets > 0) {
+                if (this._sock.rQwait("VideoEncoders presets", numPresets * 4)) {
+                    return false;
+                }
+            }
+
+            const presets = [];
+            for (let j = 0; j < numPresets; j++) {
+                presets.push(this._sock.rQshift32());
+            }
+
+            serverSupportedEncoders.push(codec);
+            codecConfigurations[codec] = {
+                minQuality,
+                maxQuality,
+                presets
+            };
+        }
+
+        this.videoCodecs = serverSupportedEncoders;
+        this.videoCodecConfigurations = codecConfigurations;
+
+        this.dispatchEvent(new CustomEvent("videocodecschange", {
+            detail: {
+                codecs: serverSupportedEncoders,
+                configurations: codecConfigurations
+            }
+        }));
+    }
+
+    _handleForceGameMode() {
+        // No payload — the server is requesting that this client enter game mode.
+        // Fire an event so the UI layer can engage pointer lock on the next user gesture.
+        this.dispatchEvent(new CustomEvent("gamemodeforced"));
+        return true;
+    }
+
   _handleDisconnectNotify() {
     if (this._sock.rQwait("DisconnectNotify header", 8, 1)) {
       return false;
@@ -5087,7 +5454,21 @@ export default class RFB extends EventTargetMixin {
     if (this._pointerLock) {
       // Only attempt to match the server's pointer position if we are in
       // pointer lock mode.
-      this._mousePos = { x: x, y: y };
+      if (this._directMouseEnabled) {
+        // Direct drive mode: _mousePos must be in canvas-relative CSS
+        // pixels. x/y from the wire are server framebuffer pixels, so
+        // multiply by the viewport scale to convert.
+        const scale = this._display.scale || 1;
+        this._mousePos = { x: x * scale, y: y * scale };
+        // Also update the visual cursor so it tracks the server position.
+        const canvasBounds = this._canvas.getBoundingClientRect();
+        this._cursor.move(
+          x * scale + canvasBounds.left,
+          y * scale + canvasBounds.top,
+        );
+      } else {
+        this._mousePos = { x: x, y: y };
+      }
     }
 
     return true;
@@ -5508,6 +5889,73 @@ RFB.messages = {
     sock.flush();
   },
 
+  pointerEventClamped(sock, x, y, mask, dX = 0, dY = 0) {
+    this.pointerEvent(sock, Math.max(0, x), Math.max(0, y), mask, dX, dY);
+  },
+
+  directMouseEvent(sock, dx, dy, buttonMask, scrollDX, scrollDY) {
+    const buff = sock._sQ;
+    const offset = sock._sQlen;
+
+    buff[offset] = messages.msgTypeDirectMouseEvent;
+    buff[offset + 1] = buttonMask & 0xff;
+    buff[offset + 2] = (dx >> 8) & 0xff;
+    buff[offset + 3] = dx & 0xff;
+    buff[offset + 4] = (dy >> 8) & 0xff;
+    buff[offset + 5] = dy & 0xff;
+    buff[offset + 6] = (scrollDX >> 8) & 0xff;
+    buff[offset + 7] = scrollDX & 0xff;
+    buff[offset + 8] = (scrollDY >> 8) & 0xff;
+    buff[offset + 9] = scrollDY & 0xff;
+
+    sock._sQlen += 10;
+    sock.flush();
+  },
+
+  latencyMeasurementRequest(sock, measurementId) {
+    const buff = sock._sQ;
+    const offset = sock._sQlen;
+
+    buff[offset] = messages.msgTypeLatencyMeasurement;
+    buff[offset + 1] = 0;
+    buff[offset + 2] = 0;
+    buff[offset + 3] = 0;
+
+    buff[offset + 4] = (measurementId >> 24) & 0xff;
+    buff[offset + 5] = (measurementId >> 16) & 0xff;
+    buff[offset + 6] = (measurementId >> 8) & 0xff;
+    buff[offset + 7] = measurementId & 0xff;
+
+    sock._sQlen += 8;
+    sock.flush();
+  },
+
+  videoEncodersRequest(sock, codecs) {
+    if (codecs == null) {
+      codecs = [];
+    }
+
+    const buff = sock._sQ;
+    const offset = sock._sQlen;
+
+    buff[offset] = messages.msgTypeVideoEncoders; // msg-type
+    buff[offset + 1] = codecs.length;
+
+    let j = offset + 2;
+    for (let i = 0; i < codecs.length; i++) {
+      const enc = codecs[i];
+      buff[j] = enc >> 24;
+      buff[j + 1] = enc >> 16;
+      buff[j + 2] = enc >> 8;
+      buff[j + 3] = enc;
+
+      j += 4;
+    }
+
+    sock._sQlen += j - offset;
+    sock.flush();
+  },
+
   // Used to build Notify and Request data.
   _buildExtendedClipboardFlags(actions, formats) {
     let data = new Uint8Array(4);
@@ -5849,7 +6297,7 @@ RFB.messages = {
     sock.flush();
   },
 
-  requestStats(sock) {
+  requestStats(sock, msgType) {
     const buff = sock._sQ;
     const offset = sock._sQlen;
 
@@ -5857,7 +6305,7 @@ RFB.messages = {
       return;
     }
 
-    buff[offset] = 178; // msg-type
+    buff[offset] = msgType; // msg-type
 
     buff[offset + 1] = 0; // padding
     buff[offset + 2] = 0; // padding
