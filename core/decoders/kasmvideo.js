@@ -245,7 +245,16 @@ export default class KasmVideoDecoder {
         try {
             // Start video decode timing
             this._decodingStartedTime = perfLogger.start('videoDecode');
-            screen.decoder.decode(vidChunk);
+            const decodeResult = screen.decoder.decode(vidChunk);
+            // decode() rejects asynchronously on corrupt frames, which a
+            // sync try/catch cannot see; an unhandled rejection pops the
+            // error overlay. Skip the frame instead, the stream recovers
+            // on the next keyframe.
+            if (decodeResult && typeof decodeResult.catch === "function") {
+                decodeResult.catch((err) => {
+                    Log.Warn("Skipping undecodable video frame: " + (err && err.message));
+                });
+            }
 
             if (this._decoderRecovery) {
                 this._skippedFrames = 0;

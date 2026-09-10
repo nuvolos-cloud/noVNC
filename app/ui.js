@@ -726,7 +726,45 @@ const UI = {
     document
       .getElementById("noVNC_clipboard_clear_button")
       .addEventListener("click", UI.clipboardClear);
+    // Explicit user paste (e.g. Ctrl+V over the canvas) carries its own
+    // data, so unlike navigator.clipboard.read() it needs no permission
+    // grant. This makes the first paste work without priming.
+    document.addEventListener("paste", UI.remotePaste);
   },
+
+  // Forward an explicit paste gesture to the remote clipboard.
+  remotePaste(e) {
+    const rfb = UI.rfb;
+    if (!rfb || !rfb.clipboardUp) {
+      return;
+    }
+    const target = e.target;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+      return;
+    }
+    const dt = e.clipboardData;
+    if (!dt) {
+      return;
+    }
+    if (dt.items && dt.items.length > 0) {
+      for (let i = 0; i < dt.items.length; i++) {
+        if (dt.items[i].type === "text/plain") {
+          dt.items[i].getAsString((str) => {
+            if (str) {
+              Log.Debug(">> UI.remotePaste: " + str.length + " chars");
+              rfb.clipboardPasteFrom(str);
+            }
+          });
+          return;
+        }
+      }
+    }
+    const text = dt.getData("text/plain");
+    if (text) {
+      Log.Debug(">> UI.remotePaste: " + text.length + " chars");
+      rfb.clipboardPasteFrom(text);
+    }
+   },
 
   // Add a call to save settings when the element changes,
   // unless the optional parameter changeFunc is used instead.
@@ -2054,6 +2092,11 @@ const UI = {
     UI.rfb.clipViewport = UI.getSetting("view_clip");
     UI.rfb.scaleViewport = UI.getSetting("resize") === "scale";
     UI.rfb.resizeSession = UI.getSetting("resize") === "remote";
+    UI.rfb.clipboardUp = UI.getSetting("clipboard_up");
+    UI.rfb.clipboardDown = UI.getSetting("clipboard_down");
+    UI.rfb.clipboardSeamless = UI.getSetting("clipboard_seamless");
+    UI.rfb.clipboardBinary =
+      supportsBinaryClipboard() && UI.rfb.clipboardSeamless;
     UI.setConnectionQualityValues();
     UI.rfb.pointerRelative = UI.getSetting("pointer_relative");
     UI.rfb.mouseButtonMapper = UI.initMouseButtonMapper();
