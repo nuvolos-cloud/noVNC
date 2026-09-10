@@ -1282,6 +1282,24 @@ a:visited {
 #noVNC_connect_button svg {
   fill: currentColor;
 }
+#noVNC_identify_monitor {
+  position: fixed;
+  z-index: 999999;
+  background: rgba(0,0,0,0.7);
+  color: white;
+  font-size: 30px;
+  top: 0;
+  right: 0;
+  width: 100px;
+  height: 100px;
+  display: none;
+  justify-content: center;
+  align-items: center;
+  border-bottom-left-radius: 10px;
+}
+#noVNC_identify_monitor.show {
+  display: flex;
+}
 #noVNC_notification_overlay {
   position: fixed;
   z-index: 999999;

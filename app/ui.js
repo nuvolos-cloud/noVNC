@@ -2825,12 +2825,14 @@ const UI = {
   },
 
   identify(data) {
-    document.getElementById("noVNC_identify_monitor").innerHTML = "1";
-    document.getElementById("noVNC_identify_monitor").classList.add("show");
+    const ctrl = document.getElementById("noVNC_identify_monitor");
+    if (!ctrl) {
+      return;
+    }
+    ctrl.innerHTML = "1";
+    ctrl.classList.add("show");
     setTimeout(() => {
-      document
-        .getElementById("noVNC_identify_monitor")
-        .classList.remove("show");
+      ctrl.classList.remove("show");
     }, 3500);
   },
 
