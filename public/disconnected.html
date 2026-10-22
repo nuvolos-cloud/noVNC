@@ -2,71 +2,179 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Session Disconnected</title>
+<title>Session Disconnected — Nuvolos</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   :root {
-    --bg-color: #f8f9fa;
+    --canvas: #f1f2f3;
     --card-bg: #ffffff;
-    --accent-color: #d9534f;
-    --accent-dark: #c9302c;
-    --text-color: #333;
-    --font-family: 'Segoe UI', Tahoma, sans-serif;
+    --primary: #3381ff;
+    --primary-dark: #2b6fe0;
+    --primary-soft: #e8f0fe;
+    --text: #24292f;
+    --muted: #757575;
+    --border: #e2e5ea;
+    --radius: 12px;
+    --font-family: 'Overpass', 'Segoe UI', -apple-system, sans-serif;
   }
+  * { box-sizing: border-box; }
   body {
     margin: 0;
-    background-color: var(--bg-color);
-    color: var(--text-color);
+    background-color: var(--canvas);
+    color: var(--text);
     font-family: var(--font-family);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+  }
+  .topbar {
+    width: 100%;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 0.65rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 1.15rem;
+  }
+  .brand {
+    font-weight: 600;
+    font-size: 1.05rem;
+    letter-spacing: 0.01em;
+  }
+  .wrap {
+    flex: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 100vh;
+    width: 100%;
+    padding: 2rem 1rem;
   }
   .card {
     background: var(--card-bg);
-    padding: 2rem;
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-    max-width: 400px;
-    width: 90%;
+    padding: 2.5rem 2.5rem 2rem;
+    border-radius: var(--radius);
+    box-shadow: 0 1px 3px rgba(36, 41, 47, 0.08), 0 4px 16px rgba(36, 41, 47, 0.06);
+    border: 1px solid var(--border);
+    max-width: 440px;
+    width: 100%;
     text-align: center;
   }
-  .icon {
-    font-size: 3rem;
-    color: var(--accent-color);
-    margin-bottom: 1rem;
+  .status-dot {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--primary-soft);
+    color: var(--primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.25rem;
+  }
+  .status-dot svg {
+    width: 26px;
+    height: 26px;
+  }
+  .eyebrow {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--primary);
+    background: var(--primary-soft);
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    margin-bottom: 0.9rem;
   }
   h1 {
-    font-size: 1.5rem;
-    margin-bottom: 0.5rem;
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin: 0 0 0.6rem;
   }
   p {
-    font-size: 1rem;
-    margin-bottom: 1.5rem;
-    color: #555;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    margin: 0 0 1.75rem;
+    color: var(--muted);
+  }
+  .actions {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    flex-wrap: wrap;
   }
   .btn {
-    display: inline-block;
-    padding: 0.6rem 1.2rem;
-    background-color: var(--accent-color);
-    color: white;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.6rem 1.35rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.92rem;
     text-decoration: none;
-    border-radius: 6px;
-    font-weight: 500;
-    transition: background-color 0.2s ease;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
-  .btn:hover {
-    background-color: var(--accent-dark);
+  .btn-primary {
+    background-color: var(--primary);
+    color: #ffffff;
+  }
+  .btn-primary:hover {
+    background-color: var(--primary-dark);
+  }
+  .btn-secondary {
+    background-color: var(--card-bg);
+    color: var(--text);
+    border-color: var(--border);
+  }
+  .btn-secondary:hover {
+    background-color: var(--canvas);
+  }
+  .hint {
+    margin-top: 1.5rem;
+    font-size: 0.8rem;
+    color: var(--muted);
   }
 </style>
 </head>
 <body>
-  <div class="card">
-    <div class="icon">⚠️</div>
-    <h1>Session Disconnected</h1>
-    <p>Your remote session has ended due to inactivity or disconnection.</p>
-    <a class="btn" href="/">Return to Dashboard</a>
+  <div class="topbar">
+    <span class="logo">n</span>
+    <span class="brand">nuvolos</span>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <div class="status-dot" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+          <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+          <line x1="12" y1="20" x2="12.01" y2="20"></line>
+        </svg>
+      </div>
+      <div><span class="eyebrow">Application session</span></div>
+      <h1>Session disconnected</h1>
+      <p>Your remote session ended or the connection was lost. Reopen the application from your instance, or return to the dashboard.</p>
+      <div class="actions">
+        <a class="btn btn-primary" href="javascript:history.back()">&#8592; Back to application</a>
+        <a class="btn btn-secondary" href="/">Dashboard</a>
+      </div>
+      <div class="hint">If this keeps happening, check your network connection and try again.</div>
+    </div>
   </div>
 </body>
 </html>
