@@ -436,7 +436,9 @@ const UI = {
     UI.initSetting(UI_SETTINGS.STREAM_MODE, encodings.pseudoEncodingStreamingModeJpegWebp);
     UI.initSetting(UI_SETTINGS.GOP, this.getSetting("framerate"));
     UI.initSetting(UI_SETTINGS.VIDEO_STREAM_QUALITY, 43);
-    UI.initSetting("idle_disconnect", 20);
+    // Nuvolos: idle disconnect disabled by default (0 = off). The platform
+    // manages session lifetime; the client must not navigate away on its own.
+    UI.initSetting("idle_disconnect", 0);
     UI.initSetting("prefer_local_cursor", true);
     UI.initSetting("toggle_control_panel", false);
     UI.initSetting("enable_perf_stats", false);
@@ -2152,10 +2154,14 @@ const UI = {
         if (UI.rfb) {
           const timeSinceLastActivityInS =
             (Date.now() - UI.rfb.lastActiveAt) / 1000;
-          let idleDisconnectInS = 1200; //20 minute default
-          if (Number.isFinite(parseFloat(UI.rfb.idleDisconnect))) {
-            idleDisconnectInS = parseFloat(UI.rfb.idleDisconnect) * 60;
+          // Nuvolos: idle_disconnect <= 0 (or unset/non-finite) means off.
+          // Keep the connection alive unconditionally in that case.
+          const rawIdle = parseFloat(UI.rfb.idleDisconnect);
+          if (!Number.isFinite(rawIdle) || rawIdle <= 0) {
+            UI.rfb.sendKeepAlive();
+            return;
           }
+          const idleDisconnectInS = rawIdle * 60;
 
           if (timeSinceLastActivityInS > idleDisconnectInS) {
             Log.Warn("Idle Disconnect reached, disconnecting rfb session...");
@@ -2208,6 +2214,7 @@ const UI = {
   },
 
   disconnect() {
+    UI.disarmNuvolosClickToReconnect();
     UI.rfb.disconnect();
 
     UI.connected = false;
@@ -2229,8 +2236,40 @@ const UI = {
       return;
     }
 
+    UI.disarmNuvolosClickToReconnect();
     UI.connect(null, UI.reconnectPassword);
   },
+
+    // Nuvolos: one-shot gesture listener that reconnects a dead session on
+    // the first click/keypress. Disarmed on connect or on explicit disconnect.
+    _nuvolosReconnectListener: null,
+
+    armNuvolosClickToReconnect() {
+    if (UI._nuvolosReconnectListener !== null || UI.connected) {
+      return;
+    }
+    const attempt = () => {
+      UI.disarmNuvolosClickToReconnect();
+      if (UI.connected) {
+        return;
+      }
+      Log.Info("Nuvolos click-to-reconnect: user gesture, reconnecting...");
+      UI.inhibitReconnect = false;
+      UI.reconnectAttempts = 0;
+      UI.connect(null, UI.reconnectPassword);
+    };
+    UI._nuvolosReconnectListener = attempt;
+    document.addEventListener("pointerdown", attempt, { capture: true });
+    document.addEventListener("keydown", attempt, { capture: true });
+    },
+
+    disarmNuvolosClickToReconnect() {
+    if (UI._nuvolosReconnectListener !== null) {
+      document.removeEventListener("pointerdown", UI._nuvolosReconnectListener, { capture: true });
+      document.removeEventListener("keydown", UI._nuvolosReconnectListener, { capture: true });
+      UI._nuvolosReconnectListener = null;
+    }
+    },
 
   cancelReconnect() {
     if (UI.reconnectCallback !== null) {
@@ -2244,6 +2283,7 @@ const UI = {
   },
 
   connectFinished(e) {
+    UI.disarmNuvolosClickToReconnect();
     UI.connected = true;
     UI.inhibitReconnect = false;
     UI.reconnectAttempts = 0;
@@ -2385,8 +2425,12 @@ const UI = {
             UI.kasmSessionLastActiveAt = UI.rfb.lastActiveAt;
         }
 
-        if (UI.kasmIdleDisconnectInS === null && UI.rfb && Number.isFinite(parseFloat(UI.rfb.idleDisconnect))) {
-            UI.kasmIdleDisconnectInS = parseFloat(UI.rfb.idleDisconnect) * 60;
+        // Nuvolos: only arm the idle timeout for a positive value. 0/NaN = off.
+        if (UI.kasmIdleDisconnectInS === null && UI.rfb) {
+            const rawIdle = parseFloat(UI.rfb.idleDisconnect);
+            if (Number.isFinite(rawIdle) && rawIdle > 0) {
+                UI.kasmIdleDisconnectInS = rawIdle * 60;
+            }
         }
 
         if (UI._sessionTimeoutInterval !== null) {
@@ -2398,8 +2442,16 @@ const UI = {
                 return;
             }
 
+            // Nuvolos: no positive idle budget configured -> keep alive, never fire.
+            if (UI.kasmIdleDisconnectInS === null || !(UI.kasmIdleDisconnectInS > 0)) {
+                if (UI.rfb) {
+                    UI.rfb.sendKeepAlive();
+                }
+                return;
+            }
+
             const timeSinceLastActivityInS = (Date.now() - UI.kasmSessionLastActiveAt) / 1000;
-            const idleDisconnectInS = UI.kasmIdleDisconnectInS || 1200; //20 minute default
+            const idleDisconnectInS = UI.kasmIdleDisconnectInS;
 
             if (timeSinceLastActivityInS > idleDisconnectInS) {
                 if (!UI.kasmIdleTimeoutSent) {
@@ -2490,10 +2542,16 @@ const UI = {
             UI.reconnectCallback = setTimeout(UI.reconnect, delay);
             return;
         } else if (!e.detail.clean) {
+            // Nuvolos: the RFB session is gone (e.g. proxy-idled websocket).
+            // Keep the last framebuffer visible and reconnect on the next
+            // user gesture instead of dropping to a dead control bar.
             UI.updateVisualState('disconnected');
-            if (wasConnected) {
-                UI.showStatus(_("Something went wrong, connection is closed"),
+            UI.showStatus(_("Connection lost — click anywhere to reconnect"),
                               'error');
+            UI.inhibitReconnect = false;
+            UI.armNuvolosClickToReconnect();
+            if (wasConnected) {
+                Log.Warn("Nuvolos click-to-reconnect armed after abnormal disconnect");
             } else {
                 UI.showStatus(_("Failed to connect to server"), 'error');
             }
